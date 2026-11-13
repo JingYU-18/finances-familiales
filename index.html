@@ -160,6 +160,14 @@ textarea.code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;w
 .settings-grid{display:grid;gap:14px;grid-template-columns:1fr 1fr}
 @media (max-width:860px){.settings-grid{grid-template-columns:1fr}}
 .login{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--bg)}
+.dialog.wide{max-width:min(1500px,96vw)}
+.qwrap{overflow:auto;max-height:62vh;border:1px solid var(--border);border-radius:10px}
+.qgrid{font-size:12.5px}.qgrid th,.qgrid td{padding:4px 5px;border-bottom:1px solid var(--border)}
+.qgrid thead th{position:sticky;top:0;z-index:1;background:var(--surface-2)}
+.qgrid select,.qgrid input{padding:5px 6px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);font-size:12.5px}
+.qgrid select[data-f=cat]{width:210px}.qgrid input{width:84px;text-align:right}
+.qgrid .qsticky{position:sticky;left:0;z-index:2;background:var(--surface)}.qgrid thead .qsticky{z-index:3;background:var(--surface-2)}
+.qgrid tbody tr:hover td{background:transparent}
 .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--text);color:var(--surface);padding:9px 16px;border-radius:10px;font-size:13px;opacity:0;transition:opacity .2s;z-index:60;pointer-events:none}
 .toast.on{opacity:1}
 </style>
@@ -232,6 +240,7 @@ const budCur = () => S.settings.budgetCur || 'XOF';
 const toBud = (v, code) => toBase(v, code || 'EUR') * fxRate(budCur());
 const amt = x => toBud(x.amount, x.currency || 'EUR');
 const mB = (n, opt = {}) => moneyIn(n, budCur(), opt);
+const toE = v => num(v) / (fxRate(budCur()) || 1);
 const nB = n => { n = num(n); return (n < 0 ? '−' : '') + nf0.format(Math.abs(n)); };
 const nfc = new Intl.NumberFormat('fr-FR', {notation: 'compact', maximumFractionDigits: 2});
 function wan(n) { return nfc.format(num(n)); }
@@ -277,7 +286,7 @@ const DEFAULT_SETTINGS = {
 const S = {
   settings: structuredClone(DEFAULT_SETTINGS),
   tx: {},   // 'YYYY-MM' -> [items]
-  lists: { invest: [], wealth: [], property: [], debts: [], snapshots: [] }
+  lists: { invest: [], wealth: [], property: [], debts: [], snapshots: [], recurring: [] }
 };
 
 const LISTS = {
@@ -559,6 +568,7 @@ async function loadAll() {
   store.loaded = true;
   if (!data.length && store.user) showBanner('empty');
   setSync('ok', 'Synchronisé'); render();
+  runRecurring();
 }
 function subscribe() {
   if (store.channel) sb.removeChannel(store.channel);
@@ -787,6 +797,7 @@ function viewCashflow() {
     <div><h2>Budget</h2><p>Saisissez les revenus et dépenses du foyer, regroupés par mois.</p></div>
     <div class="toolbar">
       <div class="monthnav"><button class="btn sm" data-mnav="-1" aria-label="Mois précédent">‹</button><b>${monthLabel(ui.month)}</b><button class="btn sm" data-mnav="1" aria-label="Mois suivant">›</button></div>
+      <button class="btn" id="quickYear">Saisie rapide (année)</button>
       <button class="btn primary" id="addTx">+ Nouvelle opération</button>
     </div>
   </div>
@@ -800,6 +811,7 @@ function viewCashflow() {
     <div class="card"><h3>Structure des dépenses</h3>${structView(structRows(mt.items, 'expense', 2), mt.exp, 'Total des dépenses')}</div>
     <div class="card"><h3>Structure des revenus</h3>${structView(structRows(mt.items, 'income', 2), mt.inc, 'Total des revenus')}</div>
   </div>
+  ${recCard()}
   <div class="card" style="margin-top:14px">
     <h3>Détail
       <span class="toolbar">
@@ -812,14 +824,14 @@ function viewCashflow() {
     <div class="tablewrap" id="txTable"></div>
   </div>
   <div class="card" style="margin-top:14px">
-    <h3><span>Bilan annuel <span class="hint">montants en ${CUR_SYM[budCur()]}</span></span>
+    <h3><span>Bilan annuel <span class="hint">montants convertis en €</span></span>
       <select id="yearSel" class="btn sm">${[...years].sort().reverse().map(y => `<option ${y===yr?'selected':''}>${y}</option>`).join('')}</select>
     </h3>
     <div class="tablewrap"><table class="num">
       <thead><tr><th>Mois</th><th class="r">Salaires</th><th class="r">Rev. immo</th><th class="r">Rev. placements</th><th class="r">Revenus</th><th class="r">Vie courante</th><th class="r">Immobilier</th><th class="r">Placements</th><th class="r">Dépenses</th><th class="r">Solde</th><th class="r">Épargne</th></tr></thead>
-      <tbody>${ym.map(d => { const a = incSplit(d.items), b = expSplit(d.items), c = v => v ? nf0.format(v) : '<span class="mut">—</span>';
-        return `<tr><td><a href="#cashflow" data-goto="${d.m}">${monthLong(d.m)}</a></td><td class="r">${c(a.salary)}</td><td class="r">${c(a.prop)}</td><td class="r">${c(a.inv)}</td><td class="r"><b>${c(d.inc)}</b></td><td class="r">${c(b.life)}</td><td class="r">${c(b.prop)}</td><td class="r">${c(b.inv)}</td><td class="r"><b>${c(d.exp)}</b></td><td class="r">${d.inc || d.exp ? nB(d.bal, {int:1}) : '<span class="mut">—</span>'}</td><td class="r">${d.inc ? pct(d.bal / d.inc, 0) : '—'}</td></tr>`; }).join('')}</tbody>
-      <tfoot><tr><td>Année</td><td class="r">${nB(YA.salary, {int:1})}</td><td class="r">${nB(YA.prop, {int:1})}</td><td class="r">${nB(YA.inv, {int:1})}</td><td class="r">${nB(yi, {int:1})}</td><td class="r">${nB(YB.life, {int:1})}</td><td class="r">${nB(YB.prop, {int:1})}</td><td class="r">${nB(YB.inv, {int:1})}</td><td class="r">${nB(ye, {int:1})}</td><td class="r">${nB(yi - ye, {int:1})}</td><td class="r">${yi ? pct((yi - ye) / yi, 0) : '—'}</td></tr></tfoot>
+      <tbody>${ym.map(d => { const a = incSplit(d.items), b = expSplit(d.items), c = v => v ? nf0.format(toE(v)) : '<span class="mut">—</span>';
+        return `<tr><td><a href="#cashflow" data-goto="${d.m}">${monthLong(d.m)}</a></td><td class="r">${c(a.salary)}</td><td class="r">${c(a.prop)}</td><td class="r">${c(a.inv)}</td><td class="r"><b>${c(d.inc)}</b></td><td class="r">${c(b.life)}</td><td class="r">${c(b.prop)}</td><td class="r">${c(b.inv)}</td><td class="r"><b>${c(d.exp)}</b></td><td class="r">${d.inc || d.exp ? nB(toE(d.bal, {int:1})) : '<span class="mut">—</span>'}</td><td class="r">${d.inc ? pct(d.bal / d.inc, 0) : '—'}</td></tr>`; }).join('')}</tbody>
+      <tfoot><tr><td>Année</td><td class="r">${nB(toE(YA.salary, {int:1}))}</td><td class="r">${nB(toE(YA.prop, {int:1}))}</td><td class="r">${nB(toE(YA.inv, {int:1}))}</td><td class="r">${nB(toE(yi, {int:1}))}</td><td class="r">${nB(toE(YB.life, {int:1}))}</td><td class="r">${nB(toE(YB.prop, {int:1}))}</td><td class="r">${nB(toE(YB.inv, {int:1}))}</td><td class="r">${nB(toE(ye, {int:1}))}</td><td class="r">${nB(toE(yi - ye, {int:1}))}</td><td class="r">${yi ? pct((yi - ye) / yi, 0) : '—'}</td></tr></tfoot>
     </table></div>
   </div>`;
 }
@@ -833,10 +845,137 @@ function renderTxTable() {
   items.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.t || 0) - (a.t || 0));
   if (!items.length) { el.innerHTML = `<div class="empty">${(S.tx[ui.month] || []).length ? 'Aucune opération ne correspond aux filtres' : 'Aucune opération ce mois-ci'}<br><button class="btn primary" data-addtx>+ Nouvelle opération</button></div>`; return; }
   el.innerHTML = `<table><thead><tr><th>Date</th><th>Poste</th><th>Catégorie</th><th>Membre</th><th>Note</th><th class="r">Montant</th><th></th></tr></thead><tbody>
-  ${items.map(x => `<tr><td class="num">${esc(dmy(x.date).slice(0, 5))}</td><td><span class="${x.kind === 'income' ? '' : 'mut'}">${x.kind === 'income' ? 'Revenu' : 'Dépense'}</span> · ${esc(groupName(x.kind, txGroup(x)))}</td><td><span class="tag">${esc(catLabel(x))}</span></td><td>${esc(x.member || '')}</td><td class="note" title="${esc(x.note)}">${esc(x.note || '')}</td>
+  ${items.map(x => `<tr><td class="num">${esc(dmy(x.date).slice(0, 5))}</td><td><span class="${x.kind === 'income' ? '' : 'mut'}">${x.kind === 'income' ? 'Revenu' : 'Dépense'}</span> · ${esc(groupName(x.kind, txGroup(x)))}</td><td><span class="tag">${esc(catLabel(x))}</span></td><td>${esc(x.member || '')}</td><td class="note" title="${esc(x.note)}">${x.recId ? '↻ ' : ''}${esc(x.note || '')}</td>
   <td class="r num">${moneyIn(x.kind === 'income' ? num(x.amount) : -num(x.amount), x.currency || 'EUR', {sign:1})}${(x.currency || 'EUR') !== budCur() ? `<div class="mut" style="font-size:12px">≈ ${mB(amt(x), {int:1})}</div>` : ''}</td>
   <td><div class="row-actions"><button class="btn sm ghost" data-txdup="${x.id}" title="Dupliquer à la date du jour">Dupliquer</button><button class="btn sm ghost" data-txedit="${x.id}">Modifier</button><button class="btn sm ghost danger" data-txdel="${x.id}">Supprimer</button></div></td></tr>`).join('')}
   </tbody></table>`;
+}
+/* ============ Opérations automatiques (récurrentes) ============ */
+const REC_DAYS = ['last', 'first', ...Array.from({length: 28}, (_, i) => String(i + 1))];
+const recDayLabel = d => d === 'last' ? 'Dernier jour du mois' : d === 'first' ? 'Premier jour du mois' : 'Le ' + d + ' du mois';
+const REC_FIELDS = [
+  {k:'kind', l:'Type', t:'kind', full:1},
+  {k:'category', l:'Catégorie', t:'category', req:1},
+  {k:'detail', l:'Détail (facultatif)', t:'detail'},
+  {k:'amount', l:'Montant mensuel', t:'money', req:1},
+  {k:'currency', l:'Devise', t:'select', opts:TX_CURS, optLabel: c => c + ' — ' + CUR_NAME[c]},
+  {k:'member', l:'Membre', t:'member'},
+  {k:'day', l:'Date de passage', t:'select', opts:REC_DAYS, optLabel: recDayLabel, help:'Revenus : par défaut le dernier jour · Charges : le premier jour'},
+  {k:'start', l:'À partir de (mois)', t:'month', req:1, help:'Les mois passés sont rattrapés automatiquement'},
+  {k:'end', l:'Jusqu’à (facultatif)', t:'month'},
+  {k:'note', l:'Note', t:'text', full:1}
+];
+function lastDay(m) { const [y, mm] = m.split('-').map(Number); return new Date(y, mm, 0).getDate(); }
+function recDate(t, m) {
+  const d = t.day === 'last' ? lastDay(m) : t.day === 'first' ? 1 : Math.min(+t.day || 1, lastDay(m));
+  return m + '-' + String(d).padStart(2, '0');
+}
+/* Crée les opérations échues qui n'existent pas encore (identifiant fixe : pas de doublon) */
+function runRecurring() {
+  const now = today(), cm = curMonth(), touched = new Set();
+  for (const t of S.lists.recurring || []) {
+    if (!t.start || t.paused) continue;
+    for (let m = t.start; m <= cm && (!t.end || m <= t.end); m = addMonth(m, 1)) {
+      const date = recDate(t, m);
+      if (date > now || (t.skip || []).includes(m)) continue;
+      const id = 'r_' + t.id + '_' + m;
+      if (findTx(id)) continue;
+      const o = { id, recId: t.id, kind: t.kind, category: t.category, detail: t.detail || '', amount: num(t.amount), currency: t.currency || 'XOF',
+        member: t.member || '', note: t.note || 'Automatique', date, t: Date.now() };
+      o.group = txGroup(o);
+      (S.tx[m] = S.tx[m] || []).push(o); touched.add(m);
+    }
+  }
+  touched.forEach(m => persist('tx', m));
+  if (touched.size) { render(); toast(touched.size + ' mois complété(s) par les opérations automatiques'); }
+}
+function recForm(id) {
+  const init = id ? (S.lists.recurring || []).find(x => x.id === id) : { kind: 'income', currency: S.settings.txCur || 'XOF', day: 'last', start: curMonth(), member: S.settings.members[0] || '' };
+  openForm(id ? 'Modifier l’opération automatique' : 'Nouvelle opération automatique', REC_FIELDS, init, v => {
+    v.amount = Math.abs(num(v.amount));
+    if (v.end && v.end < v.start) { toast('La fin précède le début'); return; }
+    const o = { ...(init || {}), ...v, id: id || uid() };
+    S.lists.recurring = id ? S.lists.recurring.map(x => x.id === id ? o : x) : [...(S.lists.recurring || []), o];
+    persist('lists', 'recurring'); render(); toast(id ? 'Mis à jour' : 'Ajoutée'); runRecurring();
+  });
+  // jour par défaut selon le type
+  document.querySelectorAll('#dialog [data-kind]').forEach(b => b.addEventListener('click', () => { const d = document.querySelector('#dialog select[name=day]'); if (d && !id) d.value = b.dataset.kind === 'income' ? 'last' : 'first'; }));
+}
+function recCard() {
+  const L = S.lists.recurring || [];
+  const totI = sum(L.filter(t => t.kind === 'income' && !t.paused), t => toBud(t.amount, t.currency)), totE = sum(L.filter(t => t.kind === 'expense' && !t.paused), t => toBud(t.amount, t.currency));
+  return `<div class="card" style="margin-top:14px">
+    <h3><span>Opérations automatiques <span class="hint">ajoutées chaque mois sans saisie</span></span><button class="btn sm primary" id="addRec">+ Ajouter</button></h3>
+    ${L.length ? `<div class="tablewrap"><table><thead><tr><th>Type</th><th>Catégorie</th><th>Membre</th><th class="r">Montant / mois</th><th>Passage</th><th>Période</th><th></th></tr></thead><tbody>
+    ${L.map(t => `<tr class="${t.paused ? 'mut' : ''}"><td>${t.kind === 'income' ? 'Revenu' : 'Dépense'}</td><td><span class="tag">${esc(t.detail ? t.category + ' · ' + t.detail : t.category)}</span></td><td>${esc(t.member || '')}</td>
+      <td class="r num">${moneyIn(t.amount, t.currency || 'XOF')}</td><td>${esc(recDayLabel(t.day))}</td><td class="num mut">${esc(t.start)}${t.end ? ' → ' + esc(t.end) : ' → …'}${t.paused ? ' · en pause' : ''}</td>
+      <td><div class="row-actions"><button class="btn sm ghost" data-recpause="${t.id}">${t.paused ? 'Reprendre' : 'Pause'}</button><button class="btn sm ghost" data-recedit="${t.id}">Modifier</button><button class="btn sm ghost danger" data-recdel="${t.id}">Supprimer</button></div></td></tr>`).join('')}
+    </tbody><tfoot><tr><td colspan="3">Total mensuel</td><td class="r num">+${mB(totI, {int:1})}<br>−${mB(totE, {int:1})}</td><td colspan="3"></td></tr></tfoot></table></div>`
+    : `<div class="mut" style="font-size:13px">Exemple : vos salaires (le dernier jour du mois) ou vos charges fixes (le premier jour). Elles sont ajoutées automatiquement à l’ouverture de la page, y compris les mois passés depuis la date de début.</div>`}
+  </div>`;
+}
+/* ============ Saisie rapide : une année entière en grille ============ */
+function hashKey(str) { let h = 0; for (const c of str) h = (h * 31 + c.charCodeAt(0)) | 0; return (h >>> 0).toString(36); }
+const qKey = r => hashKey([r.kind, r.category, r.detail || '', r.member || '', r.currency].join('|'));
+function quickRowsDefault() {
+  const rows = [], cur = S.settings.txCur || 'XOF', cc = S.settings.catCur || DEFAULT_SETTINGS.catCur;
+  groupsOf('income').forEach(g => g.cats.forEach(c => { if (g.g === 'salary' || g.g === 'property') rows.push({kind: 'income', category: c, currency: cc[c] || cur}); }));
+  groupsOf('expense').forEach(g => g.cats.forEach(c => rows.push({kind: 'expense', category: c, currency: cc[c] || cur})));
+  return rows;
+}
+function quickEntry(year) {
+  year = year || ui.year;
+  const months = Array.from({length: 12}, (_, i) => year + '-' + String(i + 1).padStart(2, '0'));
+  // lignes : par défaut + lignes déjà saisies rapidement cette année
+  const rows = quickRowsDefault(), seen = new Set(rows.map(qKey));
+  months.forEach(m => (S.tx[m] || []).forEach(x => { if (x.qk && !seen.has(x.qk)) { const r = {kind: x.kind, category: x.category, detail: x.detail || '', member: x.member || '', currency: x.currency || 'EUR'}; seen.add(qKey(r)); rows.push(r); } }));
+  const valOf = (r, m) => { const id = 'q_' + qKey(r) + '_' + m; const f = (S.tx[m] || []).find(x => x.id === id); return f ? f.amount : ''; };
+  const catOpts = (sk, sel) => ['income', 'expense'].map(k => groupsOf(k).map(g => `<optgroup label="${k === 'income' ? 'Revenus' : 'Dépenses'} — ${esc(groupName(k, g.g))}">${g.cats.map(c => `<option value="${k}|${esc(c)}" ${k === sk && c === sel ? 'selected' : ''}>${esc(c)}</option>`).join('')}</optgroup>`).join('')).join('');
+  const rowHtml = (r, i) => `<tr data-row="${i}">
+    <td class="qsticky"><select data-f="cat"><option value="">— choisir —</option>${catOpts(r.kind, r.category)}</select></td>
+    ${months.map(m => `<td><input type="number" min="0" step="any" data-m="${m}" value="${esc(valOf(r, m))}"></td>`).join('')}
+    <td><select data-f="currency">${TX_CURS.map(c => `<option ${c === r.currency ? 'selected' : ''}>${c}</option>`).join('')}</select></td>
+    <td><select data-f="member"><option value="">—</option>${S.settings.members.map(n => `<option ${n === r.member ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></td>
+    <td><button type="button" class="btn sm ghost" data-fill title="Recopier la 1re valeur saisie sur tous les mois">→ tous</button></td></tr>`;
+  const dlg = $('#dialog'); dlg.classList.add('wide');
+  dlg.innerHTML = `<h4>Saisie rapide — année
+      <select id="qYear" class="btn sm">${[+year - 1, +year, +year + 1].map(y => `<option ${String(y) === String(year) ? 'selected' : ''}>${y}</option>`).join('')}</select></h4>
+    <div class="mut" style="font-size:12.5px;margin-bottom:10px">Un montant par mois et par ligne. Revenus datés du dernier jour du mois, dépenses du premier jour. Case vide = rien. Ré-ouvrir la grille permet de corriger : les montants sont remplacés, sans doublon.</div>
+    <div class="qwrap"><table class="qgrid"><thead><tr><th class="qsticky">Catégorie</th>${months.map(m => `<th>${monthShort(m)}</th>`).join('')}<th>Devise</th><th>Membre</th><th></th></tr></thead>
+    <tbody id="qBody">${rows.map(rowHtml).join('')}</tbody></table></div>
+    <div class="acts" style="justify-content:space-between"><button class="btn" id="qAdd" type="button">+ Ligne</button><span><button class="btn" id="qCancel" type="button">Annuler</button> <button class="btn primary" id="qSave" type="button">Enregistrer l’année</button></span></div>`;
+  $('#mask').classList.add('on');
+  const body = $('#qBody');
+  body.addEventListener('change', e => {
+    if (e.target.dataset.f === 'cat') { const c = (S.settings.catCur || DEFAULT_SETTINGS.catCur)[e.target.value.split('|')[1]]; if (c) e.target.closest('tr').querySelector('[data-f=currency]').value = c; }
+  });
+  body.addEventListener('click', e => {
+    if (!e.target.hasAttribute('data-fill')) return;
+    const ins = [...e.target.closest('tr').querySelectorAll('input[data-m]')]; const first = ins.find(x => x.value !== '');
+    if (first) ins.forEach(x => x.value = first.value);
+  });
+  $('#qAdd').onclick = () => { body.insertAdjacentHTML('beforeend', rowHtml({kind: '', category: '', currency: S.settings.txCur || 'XOF'}, body.children.length)); };
+  $('#qYear').onchange = e => quickEntry(e.target.value);
+  $('#qCancel').onclick = () => { dlg.classList.remove('wide'); closeModal(); };
+  $('#qSave').onclick = () => {
+    const touched = new Set(); let n = 0;
+    body.querySelectorAll('tr').forEach(tr => {
+      const kc = tr.querySelector('[data-f=cat]').value.split('|');
+      const r = { kind: kc[0], category: kc.slice(1).join('|'), detail: '', member: tr.querySelector('[data-f=member]').value, currency: tr.querySelector('[data-f=currency]').value };
+      if (!r.category) return;
+      const key = qKey(r);
+      tr.querySelectorAll('input[data-m]').forEach(inp => {
+        const m = inp.dataset.m, id = 'q_' + key + '_' + m, arr = (S.tx[m] = S.tx[m] || []), i = arr.findIndex(x => x.id === id), v = inp.value.trim();
+        if (v === '' || !(num(v) > 0)) { if (i >= 0) { arr.splice(i, 1); touched.add(m); } return; }
+        const o = { id, qk: key, ...r, amount: num(v), date: r.kind === 'income' ? m + '-' + String(lastDay(m)).padStart(2, '0') : m + '-01', note: 'Saisie rapide', t: Date.now() };
+        o.group = txGroup(o);
+        if (i >= 0) { if (num(arr[i].amount) === o.amount && arr[i].currency === o.currency) return; arr[i] = { ...arr[i], ...o }; } else arr.push(o);
+        touched.add(m); n++;
+      });
+    });
+    touched.forEach(m => persist('tx', m));
+    dlg.classList.remove('wide'); closeModal(); render(); toast(touched.size ? n + ' montant(s) enregistré(s) sur ' + touched.size + ' mois' : 'Aucune modification');
+  };
 }
 function findTx(id) { for (const [m, arr] of Object.entries(S.tx)) { const i = arr.findIndex(x => x.id === id); if (i >= 0) return {m, i, x: arr[i]}; } return null; }
 function saveTx(obj, oldId) {
@@ -851,8 +990,27 @@ function saveTx(obj, oldId) {
 }
 function txForm(init, id) {
   const base = init ? { currency: 'EUR', ...init, category: txCat(init).cat, detail: txCat(init).detail } : { kind: 'expense', currency: S.settings.txCur || 'XOF', date: (ui.month === curMonth() ? today() : ui.month + '-01'), member: S.settings.members[0] || '' };
-  openForm(id ? 'Modifier l’opération' : 'Nouvelle opération', TX_FIELDS, base, v => {
+  const fields = id ? TX_FIELDS : [...TX_FIELDS,
+    {k:'repeat', l:'Répéter sur (mois)', t:'number', step:'1', help:'1 = une seule fois · 12 = un an'},
+    {k:'rday', l:'Jour de chaque mois', t:'select', opts:['same', ...REC_DAYS], optLabel: d => d === 'same' ? 'Même jour que la date' : recDayLabel(d)}];
+  if (!id) base.repeat = base.repeat || 1, base.rday = base.rday || 'same';
+  openForm(id ? 'Modifier l’opération' : 'Nouvelle opération', fields, base, v => {
     v.amount = Math.abs(num(v.amount));
+    const n = Math.max(1, Math.min(120, Math.round(num(v.repeat) || 1))), rday = v.rday || 'same';
+    delete v.repeat; delete v.rday;
+    if (!id && n > 1) {
+      const sid = uid(), m0 = v.date.slice(0, 7), d0 = +v.date.slice(8, 10), touched = new Set();
+      for (let k = 0; k < n; k++) {
+        const m = addMonth(m0, k), ld = lastDay(m);
+        const d = rday === 'last' ? ld : rday === 'first' ? 1 : rday === 'same' ? Math.min(d0, ld) : Math.min(+rday, ld);
+        const o = { ...v, id: uid(), sid, date: m + '-' + String(d).padStart(2, '0'), t: Date.now() + k };
+        o.group = txGroup(o);
+        (S.tx[m] = S.tx[m] || []).push(o); touched.add(m);
+      }
+      touched.forEach(m => persist('tx', m));
+      ui.month = m0; render(); toast(n + ' opérations ajoutées (' + monthLabel(m0) + ' → ' + monthLabel(addMonth(m0, n - 1)) + ')');
+      return;
+    }
     const o = { ...(init || {}), ...v, id: id || uid(), t: (init && init.t) || Date.now() };
     o.group = txGroup({kind: o.kind, category: o.category, group: init && init.kind === o.kind ? init.group : ''});
     saveTx(o, id);
@@ -1017,6 +1175,11 @@ function bindView(r) {
   });
   if (r === 'cashflow') {
     $('#addTx').onclick = () => txForm();
+    $('#quickYear').onclick = () => quickEntry(ui.year);
+    $('#addRec').onclick = () => recForm();
+    v.querySelectorAll('[data-recedit]').forEach(b => b.onclick = () => recForm(b.dataset.recedit));
+    v.querySelectorAll('[data-recpause]').forEach(b => b.onclick = () => { const t = S.lists.recurring.find(x => x.id === b.dataset.recpause); t.paused = !t.paused; persist('lists', 'recurring'); render(); if (!t.paused) runRecurring(); });
+    v.querySelectorAll('[data-recdel]').forEach(b => b.onclick = () => confirmBox('Supprimer cette opération automatique ?', 'Les opérations déjà créées sont conservées ; seules les prochaines ne seront plus ajoutées.', () => { S.lists.recurring = S.lists.recurring.filter(x => x.id !== b.dataset.recdel); persist('lists', 'recurring'); render(); toast('Supprimée'); }));
     v.querySelectorAll('[data-mnav]').forEach(b => b.onclick = () => { ui.month = addMonth(ui.month, +b.dataset.mnav); ui.year = ui.month.slice(0, 4); render(); });
     v.querySelectorAll('[data-goto]').forEach(a => a.onclick = e => { e.preventDefault(); ui.month = a.dataset.goto; render(); scrollTo({top: 0, behavior: 'smooth'}); });
     $('#yearSel').onchange = e => { ui.year = e.target.value; render(); };
@@ -1028,8 +1191,10 @@ function bindView(r) {
       const t = e.target.closest('button'); if (!t) return;
       if (t.hasAttribute('data-addtx')) return txForm();
       if (t.dataset.txedit) { const f = findTx(t.dataset.txedit); if (f) txForm(f.x, f.x.id); }
-      if (t.dataset.txdup) { const f = findTx(t.dataset.txdup); if (f) { saveTx({ ...f.x, id: uid(), date: today(), t: Date.now() }); toast('Dupliqué à la date du jour'); } }
-      if (t.dataset.txdel) { const f = findTx(t.dataset.txdel); if (f) confirmBox('Supprimer cette opération ?', `${dmy(f.x.date)} · ${f.x.category} · ${moneyIn(f.x.amount, f.x.currency || 'EUR')}`, () => { S.tx[f.m].splice(f.i, 1); persist('tx', f.m); render(); toast('Supprimé'); }); }
+      if (t.dataset.txdup) { const f = findTx(t.dataset.txdup); if (f) { const { recId, qk, ...rest } = f.x; saveTx({ ...rest, id: uid(), date: today(), t: Date.now() }); toast('Dupliqué à la date du jour'); } }
+      if (t.dataset.txdel) { const f = findTx(t.dataset.txdel); if (f) confirmBox('Supprimer cette opération ?', `${dmy(f.x.date)} · ${f.x.category} · ${moneyIn(f.x.amount, f.x.currency || 'EUR')}`, () => { S.tx[f.m].splice(f.i, 1); persist('tx', f.m);
+        if (f.x.recId) { const t = (S.lists.recurring || []).find(r => r.id === f.x.recId); const mm = f.x.id.slice(-7); if (t) { t.skip = [...new Set([...(t.skip || []), mm])]; persist('lists', 'recurring'); } }
+        render(); toast('Supprimé'); }); }
     };
   }
   if (r === 'settings') {
@@ -1117,6 +1282,7 @@ function openForm(title, fields, init, onSave, keepOpenOption) {
     else if (f.t === 'textarea') inp = `<textarea name="${f.k}" rows="2">${esc(val(f.k))}</textarea>`;
     else if (f.t === 'money' || f.t === 'number') inp = `<input name="${f.k}" type="number" inputmode="decimal" step="${f.step || '0.01'}" ${f.t === 'money' ? 'min="0"' : ''} value="${esc(val(f.k))}" placeholder="${f.t === 'money' ? '0.00' : ''}">`;
     else if (f.t === 'date') inp = `<input name="${f.k}" type="date" value="${esc(val(f.k))}">`;
+    else if (f.t === 'month') inp = `<input name="${f.k}" type="month" value="${esc(val(f.k))}">`;
     else inp = `<input name="${f.k}" type="text" value="${esc(val(f.k))}" placeholder="${esc(f.ph || '')}">`;
     return `<div class="f ${f.full ? 'full' : ''}"><label>${f.l}${req}</label>${inp}${f.help ? `<span class="help">${f.help}</span>` : ''}</div>`;
   };
@@ -1169,7 +1335,7 @@ function confirmBox(title, msg, onYes) {
   $('#cNo').onclick = closeModal; $('#cYes').onclick = () => { closeModal(); onYes(); };
   $('#mask').classList.add('on');
 }
-function closeModal() { $('#mask').classList.remove('on'); }
+function closeModal() { $('#mask').classList.remove('on'); $('#dialog').classList.remove('wide'); }
 $('#mask').addEventListener('mousedown', e => { if (e.target.id === 'mask') closeModal(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
