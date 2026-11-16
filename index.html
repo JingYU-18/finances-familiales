@@ -262,15 +262,15 @@ const DEFAULT_SETTINGS = {
   fx: { MAD: 10.75, XOF: 655.957, USD: 1.12, CNY: 7.77 },
   budgetCur: 'XOF',
   subCats: { 'Vie quotidienne': ['Courses','Repas & restaurants','Vêtements','Loisirs','Sport','Vie sociale','Médical'] },
-  catCur: { 'Salaire 1': 'XOF', 'Salaire 2': 'XOF', 'Salaire 3 (euros)': 'EUR' },
+  catCur: { 'Salaire YJ-XOF': 'XOF', 'Salaire SG-XOF': 'XOF', 'Salaire SG-EURO': 'EUR' },
   txCur: 'XOF',
   fxDate: '2026-11-13',
-  members: ['Moi', 'Conjoint(e)'],
+  members: ['YJ', 'SG'],
   budget: 0,
   colorMode: 'greenUp',
   catTree: {
     income: [
-      {g:'salary', l:'Salaires', cats:['Salaire 1','Salaire 2','Salaire 3 (euros)','Prime']},
+      {g:'salary', l:'Salaires', cats:['Salaire YJ-XOF','Salaire SG-XOF','Salaire SG-EURO','Prime']},
       {g:'property', l:'Revenus immobiliers', cats:['Loyers','Autres revenus immobiliers']},
       {g:'invest', l:'Revenus de placements', cats:['Dividendes','Intérêts','Plus-values réalisées']},
       {g:'other', l:'Autres revenus', cats:['Remboursements','Autres revenus']}
@@ -475,7 +475,7 @@ function structRows(items, kind, depth) {
       if (g.g === 'other' && !g.v && depth < 2) continue;
       rows.push({l: g.l, v: g.v, lvl: 0});
       if (g.g === 'salary') {
-        g.cats.forEach(c => { if (c.v || depth >= 2 || /^Salaire \d/.test(c.l)) rows.push({l: c.l, v: c.v, lvl: 1}); });
+        g.cats.forEach(c => { if (c.v || depth >= 2 || /^Salaire /.test(c.l)) rows.push({l: c.l, v: c.v, lvl: 1}); });
       } else if (depth >= 2) g.cats.forEach(c => rows.push({l: c.l, v: c.v, lvl: 1}));
     }
   } else {
@@ -567,6 +567,7 @@ async function loadAll() {
   data.forEach(r => applyDoc(r.path, r.data));
   store.loaded = true;
   if (!data.length && store.user) showBanner('empty');
+  migrateNames();
   setSync('ok', 'Synchronisé'); render();
   runRecurring();
 }
@@ -871,6 +872,35 @@ function recDate(t, m) {
   return m + '-' + String(d).padStart(2, '0');
 }
 /* Crée les opérations échues qui n'existent pas encore (identifiant fixe : pas de doublon) */
+/* Renommage des anciens libellés (Salaire 1/2/3, Moi, Conjoint) dans les données déjà enregistrées */
+const RENAME_CAT = { 'Salaire 1': 'Salaire YJ-XOF', 'Salaire 2': 'Salaire SG-XOF', 'Salaire 3 (euros)': 'Salaire SG-EURO' };
+const RENAME_MEM = { 'Moi': 'YJ', 'Conjoint(e)': 'SG', 'Conjoint': 'SG' };
+function migrateNames() {
+  const rc = c => RENAME_CAT[c] || c, rm = m => RENAME_MEM[m] || m;
+  const st = S.settings; let setChanged = false;
+  const mem = [...new Set((st.members || []).map(rm))];
+  if (JSON.stringify(mem) !== JSON.stringify(st.members)) { st.members = mem; setChanged = true; }
+  if (st.catTree) for (const k of ['income', 'expense']) for (const g of st.catTree[k] || []) { const n = g.cats.map(rc); if (n.join() !== g.cats.join()) { g.cats = [...new Set(n)]; setChanged = true; } }
+  if (st.catCur) { const n = {}; for (const [c, v] of Object.entries(st.catCur)) n[rc(c)] = v; for (const [c, v] of Object.entries(DEFAULT_SETTINGS.catCur)) if (!(c in n)) n[c] = v; if (JSON.stringify(n) !== JSON.stringify(st.catCur)) { st.catCur = n; setChanged = true; } }
+  if (setChanged) persist('lists', 'settings');
+  for (const [m, arr] of Object.entries(S.tx)) {
+    let ch = false;
+    arr.forEach((x, i) => {
+      const c = rc(x.category), mb = rm(x.member || '');
+      if (c === x.category && mb === (x.member || '')) return;
+      const o = { ...x, category: c, member: mb };
+      if (x.qk) { o.qk = qKey(o); o.id = 'q_' + o.qk + '_' + m; }
+      arr[i] = o; ch = true;
+    });
+    if (ch) persist('tx', m);
+  }
+  for (const key of ['recurring', 'invest', 'wealth', 'property', 'debts']) {
+    let ch = false;
+    S.lists[key] = (S.lists[key] || []).map(x => { const o = { ...x }; if ('category' in o && rc(o.category) !== o.category) { o.category = rc(o.category); ch = true; }
+      for (const f of ['member', 'owner']) if (o[f] && rm(o[f]) !== o[f]) { o[f] = rm(o[f]); ch = true; } return o; });
+    if (ch) persist('lists', key);
+  }
+}
 function runRecurring() {
   const now = today(), cm = curMonth(), touched = new Set();
   for (const t of S.lists.recurring || []) {
@@ -1202,7 +1232,7 @@ function bindView(r) {
       const s = S.settings;
       s.currency = $('#sCur').value.trim() || '€';
       s.budget = Math.max(0, num($('#sBudget').value));
-      s.members = splitList($('#sMembers').value); if (!s.members.length) s.members = ['Moi'];
+      s.members = splitList($('#sMembers').value); if (!s.members.length) s.members = ['YJ', 'SG'];
       s.colorMode = $('#sColor').value;
       s.fx = { ...(s.fx || {}) }; document.querySelectorAll('[data-fx]').forEach(el => { const r = num(el.value); if (r > 0) s.fx[el.dataset.fx] = r; });
       s.budgetCur = $('#sBudCur').value; s.txCur = $('#sTxCur').value;
